@@ -1,39 +1,88 @@
-# krosshair
-A crosshair overlay for games on linux using vulkan.
+# krosshair - Crosshair Overlay for Games on Linux
 
-![max](img/maxterOk-crosshair.png)
-![quake](img/quake-crosshair.png)
+* Works with **Steam and non-Steam games**.
+* Works on **native and Flatpak** installations (e.g. Bazitte / Steam Deck / SteamOS).
 
-## Installation
+# Demo - Default Dot Crosshair
+Screenshot showing the default crosshair. To use a different crosshair place one of the files in repo dir `crosshairs` at `~/.config/crosshair-maker/projects/current.png` or use env var `KROSSHAIR_IMG` to load it from a different location.
+<br><br>
+<img src="img/quake-crosshair.png" alt="quake" width="800"/>
+<br>
 
-### AUR
+# Installation
+
+## Non-Flatpak Installation
+
+## Option 1: Via Arch Linux AUR
 
 ```bash
 yay -S krosshair
 ```
 
-### From source
+## Option 2: Build from Source
 
 ```bash
-git clone https://github.com/fibsussy/krosshair.git
+git clone https://github.com/noahlyk/krosshair.git
 cd krosshair
-make
+make install
 ```
 
-## Usage
+## Flatpak Installation
+
+Necessary if your games (and apps like Steam / Lutris / Heroic) run via Flatpak. This is for example the case on Bazzite and other immutable Linux distributions.
+
+### Option 1: Download Github Release
+- Download **all** .flatpack files from the [releases page](https://github.com/noahlyk/krosshair/releases).
+- Install via double-clicking the file in your file manager (or run `flatpak install (--user) filename.flatpak` in your terminal).
+
+
+### Option 2: Build from Source
+
+Builds and installs Flatpak bundles for the supported runtime versions (24.08, 25.08, 26.08).
+
+```bash
+sudo pacman -S flatpak-builder
+git clone https://github.com/noahlyk/krosshair.git
+cd krosshair
+make flatpak-install
+```
+
+### Set Permissions
+If you want to use other crosshairs (instead of the default dot crosshair) you need to allow your flatpak apps to (read-only) access dir `~/.config/crosshair-maker/projects`. To set a new default crosshair pick a crosshair from the `crosshairs` dir of this repo and place it at `~/.config/crosshair-maker/projects/current.png`. You can also place multiple crosshairs in the directory and set the env var `KROSSHAIR_IMG` to pick one of them (e.g. `KROSSHAIR_IMG=~/.config/crosshair-maker/projects/plus.png %command%` for Steam games).
+
+```
+flatpak override --user --filesystem=~/.config/crosshair-maker/projects:ro
+```
+
+# Usage
+
+## Steam Games
+
+Add the follwoing launch option:
+
+```
+KROSSHAIR=1 %command%
+```
+
+To use a custom crosshair (from the `crosshairs` dir of this repo):
+
+```
+KROSSHAIR=1 KROSSHAIR_IMG=/optional/path/to/crosshair.png %command%
+```
+
+## Other Games
 
 ```bash
 export KROSSHAIR=1
+#export KROSSHAIR_IMG=/path/to/crosshair.png # To use a custom crosshair (from the `crosshairs` dir of this repo)
 your-game
 ```
 
-For Steam games, add `KROSSHAIR=1 %command%` to launch options.
+# Make your own crosshairs using `crosshair-maker`
 
-## crosshair-maker integration
+krosshair works out of the box with [crosshair-maker](https://github.com/noahlyk/crosshair-maker), a crosshair overlay creator with SVG rendering and preview. The currently selected crosshair is automatically exported to `~/.config/crosshair-maker/projects/current.png`, which krosshair picks up as its default — just launch your game with `KROSSHAIR=1` and go.
 
-krosshair works out of the box with [crosshair-maker](https://github.com/fibsussy/crosshair-maker), a crosshair overlay creator with SVG rendering and preview. The currently selected crosshair is automatically exported to `~/.config/crosshair-maker/projects/current.png`, which krosshair picks up as its default — just launch your game with `KROSSHAIR=1` and go.
-
-You can override the image with `export KROSSHAIR_IMG=/path/to/crosshair.png` if you want to use a custom file.
+Use `export KROSSHAIR_IMG=/path/to/crosshair.png` to use a specific crosshair file.
 
 To test the full setup together with `vkcube`:
 
@@ -42,6 +91,8 @@ $ yay -Sy krosshair crosshair-maker vulkan-tools
 $ KROSSHAIR=1 vkcube &
 $ crosshair-maker &
 ```
+
+# FAQ / Various
 
 ## Can i get banned for this?
 I don't know, use at your own risk. I've only used it in Quake Champions and STRAFTAT, both of which don't really have an anticheat.

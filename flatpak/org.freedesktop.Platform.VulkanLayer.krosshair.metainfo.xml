@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>org.freedesktop.Platform.VulkanLayer.krosshair</id>
+  <extends>org.freedesktop.Platform</extends>
+  <name>krosshair</name>
+  <summary>Vulkan layer providing an in-game crosshair overlay</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="com.github.krosshair">
+    <name>krosshair developers</name>
+  </developer>
+  <description>
+    <p>
+      krosshair is a Vulkan implicit layer that renders a crosshair overlay
+      in any Vulkan application. Enable it by setting the KROSSHAIR=1
+      environment variable; disable it with DISABLE_KROSSHAIR=1.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/noahlyk/krosshair</url>
+  <update_contact>https://github.com/noahlyk/krosshair</update_contact>
+  <releases>
+    <release version="<set_during_build>" date="<set_during_build>"/>
+  </releases>
+</component>

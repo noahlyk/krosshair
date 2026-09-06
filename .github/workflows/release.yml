@@ -66,15 +66,24 @@ jobs:
   build:
     needs: [version]
     runs-on: ubuntu-latest
-    container: archlinux:latest
     steps:
       - name: Install system dependencies
-        run: pacman -Syu --noconfirm base-devel vulkan-headers vulkan-icd-loader libx11 libgl git
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libvulkan-dev libvulkan1 \
+               libx11-dev libgl1-mesa-dev git flatpak-builder flatpak
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+      - name: Mark workspace as trusted for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Enable Flathub remote
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Build binary
         run: make release
+      - name: Build flatpak
+        run: make flatpak-build
       - name: Determine architecture
         id: arch
         run: |
@@ -110,6 +119,7 @@ jobs:
             aur/
             krosshair-linux-*.tar.gz
             krosshair-linux-*.sha256
+            build/flatpak/*.flatpak
 
   release:
     needs: [version, build]
@@ -160,7 +170,8 @@ jobs:
             --title "v${VERSION}" \
             --notes "Release v${VERSION}" \
             krosshair-linux-${ARCH_NAME}.tar.gz \
-            krosshair-linux-${ARCH_NAME}.sha256
+            krosshair-linux-${ARCH_NAME}.sha256 \
+            build/flatpak/*.flatpak
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

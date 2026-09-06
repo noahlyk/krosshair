@@ -1,0 +1,37 @@
+id: org.freedesktop.Platform.VulkanLayer.krosshair
+branch: "26.08"
+runtime: org.freedesktop.Platform
+runtime-version: "26.08"
+sdk: org.freedesktop.Sdk
+build-extension: true
+separate-locales: false
+build-options:
+  prefix: /usr/lib/extensions/vulkan/krosshair
+modules:
+  - name: krosshair
+    buildsystem: simple
+    build-commands:
+      - make flatpak-builder-callback
+    sources:
+      - type: file
+        path: ../Makefile
+      - type: file
+        path: ../krosshair.json
+      - type: file
+        path: ../LICENSE
+      - type: dir
+        path: ../src
+        dest: src
+      - type: dir
+        path: ../include
+        dest: include
+      - type: dir
+        path: ../shaders
+        dest: shaders
+  - name: metadata
+    buildsystem: simple
+    build-commands:
+      - install -Dm644 org.freedesktop.Platform.VulkanLayer.krosshair.metainfo.xml -t ${FLATPAK_DEST}/share/metainfo/
+    sources:
+      - type: file
+        path: ../flatpak/org.freedesktop.Platform.VulkanLayer.krosshair.metainfo.xml
