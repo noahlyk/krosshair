@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+  <!-- White frame: 250px inset, 15px line width -->
+  <rect x="250" y="250" width="1420" height="580" fill="none" stroke="white" stroke-width="15"/>
+
+  <!-- Line 1: top center, ends 400px from top -->
+  <line x1="960" y1="0" x2="960" y2="400" stroke="white" stroke-width="15"/>
+
+  <!-- Line 2: bottom center, ends 400px from bottom -->
+  <line x1="960" y1="1080" x2="960" y2="680" stroke="white" stroke-width="15"/>
+
+  <!-- Line 3: left center, ends 800px from left -->
+  <line x1="0" y1="540" x2="800" y2="540" stroke="white" stroke-width="15"/>
+
+  <!-- Line 4: right center, ends 800px from right -->
+  <line x1="1920" y1="540" x2="1120" y2="540" stroke="white" stroke-width="15"/>
+</svg>

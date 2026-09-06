@@ -5,3 +5,5 @@ png_to_header.py
 notes.md
 .direnv
 result
+build
+.aider*

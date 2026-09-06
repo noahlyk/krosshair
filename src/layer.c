@@ -532,7 +532,7 @@ static void setup_vertices_uv(vertex_t* vertices,
                                float uv_top, float uv_bottom)
 {
         float width_ndc  = ((tex_width * scale) / canvas_width);
-        float height_ndc = ((tex_width * scale) / canvas_height);
+        float height_ndc = ((tex_height * scale) / canvas_height);
 
         /* should fix even-length crosshairs */
         float pixel_offset_x =
@@ -1925,13 +1925,13 @@ static void ensure_swapchain_crosshair(swapchain_data_t* data,
                 float uv_step = 1.0f / (float)data->anim_frame_count;
                 setup_vertices_uv(data->vertices,
                                   (float)data->width, (float)data->height,
-                                  (float)data->anim_frame_height,
-                                  (float)tex_width, 1.0f,
+                                  (float)tex_width,
+                                  (float)data->anim_frame_height, 1.0f,
                                   0.0f, uv_step);
         } else {
                 setup_vertices(data->vertices,
                                (float)data->width, (float)data->height,
-                               (float)tex_height, (float)tex_width, 1.0f);
+                               (float)tex_width, (float)tex_height, 1.0f);
         }
 
         data->crosshair_uploaded = 1;
@@ -2026,7 +2026,7 @@ static void ensure_swapchain_dynamic_mask(swapchain_data_t* data,
 
         setup_vertices(data->dynamic_mask.vertices,
                        (float)data->width, (float)data->height,
-                       (float)tex_height, (float)tex_width, 1.0f);
+                       (float)tex_width, (float)tex_height, 1.0f);
 
         data->dynamic_mask.uploaded = 1;
         KROSSHAIR_LOG("[KROSSHAIR] loaded dynamic mask from: %s\n", mpath);
@@ -2419,8 +2419,8 @@ static krosshair_draw_t* render_swapchain_display(
                         setup_vertices_uv(
                             data->vertices,
                             (float)data->width, (float)data->height,
-                            (float)data->anim_frame_height,
-                            (float)data->crosshair_tex_width, 1.0f,
+                            (float)data->crosshair_tex_width,
+                            (float)data->anim_frame_height, 1.0f,
                             uv_top, uv_bot);
 
                         /* force vertex buffer re-upload with new UVs */
