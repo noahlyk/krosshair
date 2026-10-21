@@ -383,9 +383,13 @@ struct dynamic_push_constants {
 };
 /* Total: 88 bytes */
 
-static void parse_dynamic_cfg(const char* path, struct dynamic_push_constants* pc)
+/* Upper bound on simultaneously active dynamic groups.  The config may list
+ * any number; extras past this are ignored (and logged). */
+#define KROSSHAIR_MAX_DYN_GROUPS 32
+
+static void dynamic_pc_defaults(struct dynamic_push_constants* pc)
 {
-        /* zero everything except quad_ndc_min/size (caller sets those) */
+        /* everything except quad_ndc_min/size (set per frame) */
         pc->invert_str      = 0.0f;
         pc->dodge_str       = 0.0f;
         pc->dodge_r = 1.0f; pc->dodge_g = 1.0f; pc->dodge_b = 1.0f;
@@ -400,57 +404,124 @@ static void parse_dynamic_cfg(const char* path, struct dynamic_push_constants* p
         pc->opacity         = 1.0f;
         pc->sample_size     = 1;
         pc->pool_mode       = 0;
+}
 
-        if (!path) return;
+/* Apply one effect line ("invert 1.0", "sample 5 max", ...) to a group. */
+static void dynamic_pc_apply_line(struct dynamic_push_constants* pc, const char* line)
+{
+        char name[64];
+        float a1 = 0, a2 = 0, a3 = 0, a4 = 0;
+        int n = sscanf(line, "%63s %f %f %f %f", name, &a1, &a2, &a3, &a4);
+        if (n < 2) return;
+
+        if (strcmp(name, "invert") == 0) {
+                pc->invert_str = a1;
+        } else if (strcmp(name, "dodge") == 0) {
+                pc->dodge_str = a1;
+                if (n >= 5) { pc->dodge_r = a2; pc->dodge_g = a3; pc->dodge_b = a4; }
+        } else if (strcmp(name, "burn") == 0) {
+                pc->burn_str = a1;
+                if (n >= 5) { pc->burn_r = a2; pc->burn_g = a3; pc->burn_b = a4; }
+        } else if (strcmp(name, "complement") == 0) {
+                pc->complement_str = a1;
+        } else if (strcmp(name, "lumainvert") == 0) {
+                pc->lumainvert_str = a1;
+        } else if (strcmp(name, "huerotate") == 0) {
+                pc->huerotate_str = a1;
+                if (n >= 3) pc->huerotate_angle = a2;
+        } else if (strcmp(name, "saturate") == 0) {
+                pc->saturate_str = a1;
+                if (n >= 3) pc->saturate_amount = a2;
+        } else if (strcmp(name, "opacity") == 0) {
+                pc->opacity = a1;
+        } else if (strcmp(name, "sample") == 0) {
+                int size = (int)a1;
+                if (size < 1) size = 1;
+                if (size > 15) size = 15;
+                if (size % 2 == 0) size--;
+                pc->sample_size = size;
+                char mode[16] = "";
+                sscanf(line, "%*s %*f %15s", mode);
+                pc->pool_mode = strcmp(mode, "max") == 0 ? 1 :
+                                strcmp(mode, "min") == 0 ? 2 : 0;
+        }
+        /* unknown keys are ignored so newer makers stay compatible */
+}
+
+/*
+ * Parse a .dynamic.cfg into a list of groups.
+ *
+ * Effect lines belong to the group opened by the last "group <id>" line.
+ * Effect lines before any header belong to group 0, so single-group files
+ * from older makers keep working.  Each group's mask lives in
+ * current.dynamic.png (id 0) or current.dynamic.<id>.png.
+ *
+ * Returns the number of groups written to ids[]/pcs[] (at most max).
+ */
+static int parse_dynamic_cfg(const char* path, int* ids,
+                             struct dynamic_push_constants* pcs, int max)
+{
+        int count = 0;
+        if (!path) return 0;
 
         FILE* f = fopen(path, "r");
-        if (!f) return;
+        if (!f) return 0;
 
+        int cur = -1;
         char line[512];
         while (fgets(line, sizeof(line), f)) {
-                /* skip comments and blank lines */
                 if (line[0] == '#' || line[0] == '\n' || line[0] == '\r')
                         continue;
 
-                char name[64];
-                float a1 = 0, a2 = 0, a3 = 0, a4 = 0;
-                int n = sscanf(line, "%63s %f %f %f %f", name, &a1, &a2, &a3, &a4);
-                if (n < 2) continue;
-
-                if (strcmp(name, "invert") == 0) {
-                        pc->invert_str = a1;
-                } else if (strcmp(name, "dodge") == 0) {
-                        pc->dodge_str = a1;
-                        if (n >= 5) { pc->dodge_r = a2; pc->dodge_g = a3; pc->dodge_b = a4; }
-                } else if (strcmp(name, "burn") == 0) {
-                        pc->burn_str = a1;
-                        if (n >= 5) { pc->burn_r = a2; pc->burn_g = a3; pc->burn_b = a4; }
-                } else if (strcmp(name, "complement") == 0) {
-                        pc->complement_str = a1;
-                } else if (strcmp(name, "lumainvert") == 0) {
-                        pc->lumainvert_str = a1;
-                } else if (strcmp(name, "huerotate") == 0) {
-                        pc->huerotate_str = a1;
-                        if (n >= 3) pc->huerotate_angle = a2;
-                } else if (strcmp(name, "saturate") == 0) {
-                        pc->saturate_str = a1;
-                        if (n >= 3) pc->saturate_amount = a2;
-                } else if (strcmp(name, "opacity") == 0) {
-                        pc->opacity = a1;
-                } else if (strcmp(name, "sample") == 0) {
-                        int size = (int)a1;
-                        if (size < 1) size = 1;
-                        if (size > 15) size = 15;
-                        if (size % 2 == 0) size--;
-                        pc->sample_size = size;
-                        char mode[16] = "";
-                        sscanf(line, "%*s %*f %15s", mode);
-                        pc->pool_mode = strcmp(mode, "max") == 0 ? 1 :
-                                        strcmp(mode, "min") == 0 ? 2 : 0;
+                int id;
+                if (strncmp(line, "group", 5) == 0 && sscanf(line, "group %d", &id) == 1) {
+                        cur = -1;
+                        for (int i = 0; i < count; i++)
+                                if (ids[i] == id) cur = i;
+                        if (cur < 0) {
+                                if (count >= max) {
+                                        KROSSHAIR_LOG("[KROSSHAIR] too many dynamic groups, ignoring group %d\n", id);
+                                        cur = -2;
+                                        continue;
+                                }
+                                ids[count] = id;
+                                dynamic_pc_defaults(&pcs[count]);
+                                cur = count++;
+                        }
+                        continue;
                 }
+
+                if (cur == -2) continue; /* inside an ignored group */
+                if (cur < 0) {
+                        /* effect line before any header: implicit group 0 */
+                        if (count >= max) continue;
+                        ids[count] = 0;
+                        dynamic_pc_defaults(&pcs[count]);
+                        cur = count++;
+                }
+                dynamic_pc_apply_line(&pcs[cur], line);
         }
         fclose(f);
+        return count;
 }
+
+/* One dynamic group: a mask image + its effect parameters. */
+typedef struct dyn_group {
+        int id;                         /* group number from the cfg */
+        struct dynamic_push_constants pc;
+        int uploaded;
+        VkImage image;
+        VkImageView image_view;
+        VkDeviceMemory mem;
+        VkBuffer upload_buffer;
+        VkDeviceMemory upload_buffer_mem;
+        VkDescriptorSet descriptor_set;   /* from descriptor_pool */
+        VkDescriptorSet shader_set;       /* from shader_desc_pool (updated per frame) */
+        char* path;
+        struct timespec mtime;
+        int tex_width;
+        vertex_t vertices[4];
+} dyn_group_t;
 
 typedef struct swapchain_data {
         device_data_t* device_data;
@@ -503,23 +574,11 @@ typedef struct swapchain_data {
 
         krosshair_draw_t* draw;
 
-        /* ── single dynamic effect mask (optional) ── */
-        struct {
-                int uploaded;
-                VkImage image;
-                VkImageView image_view;
-                VkDeviceMemory mem;
-                VkBuffer upload_buffer;
-                VkDeviceMemory upload_buffer_mem;
-                VkDescriptorSet descriptor_set;
-                char* path;
-                struct timespec mtime;
-                int tex_width;
-                vertex_t vertices[4];
-        } dynamic_mask;
+        /* ── dynamic effect groups (any number, driven by the cfg) ── */
+        dyn_group_t dyn_groups[KROSSHAIR_MAX_DYN_GROUPS];
+        int dyn_count;
         char* dynamic_cfg_path;
         struct timespec dynamic_cfg_mtime;
-        struct dynamic_push_constants dynamic_pc;
 
         /* game framebuffer copy (for shader-based dynamic effects) */
         VkImage game_fb_image;
@@ -533,9 +592,6 @@ typedef struct swapchain_data {
         VkDescriptorPool shader_desc_pool;
         VkPipelineLayout shader_pipeline_layout;
         VkPipeline shader_pipeline;
-
-        /* descriptor set for dynamic mask + game_fb */
-        VkDescriptorSet shader_mask_desc_set;
 
 } swapchain_data_t;
 
@@ -785,11 +841,6 @@ static void shutdown_krosshair_image(swapchain_data_t* data)
                  * image/view/memory — the descriptor_set handle is wiped
                  * by the pool reset below. */
                 shutdown_dynamic_mask(data);
-                data->dynamic_mask.uploaded = 0;
-                if (data->dynamic_mask.path) {
-                        free(data->dynamic_mask.path);
-                        data->dynamic_mask.path = NULL;
-                }
 
                 device_data->vtable.ResetDescriptorPool(device_data->device,
                                                         data->descriptor_pool, 0);
@@ -799,7 +850,6 @@ static void shutdown_krosshair_image(swapchain_data_t* data)
                 if (data->shader_desc_pool) {
                         device_data->vtable.ResetDescriptorPool(
                             device_data->device, data->shader_desc_pool, 0);
-                        data->shader_mask_desc_set = VK_NULL_HANDLE;
                 }
         }
 
@@ -935,43 +985,54 @@ static void record_frame_snapshot(swapchain_data_t* data, VkCommandBuffer cmd,
         data->game_fb_ready = 1;
 }
 
-static void shutdown_dynamic_mask(swapchain_data_t* data)
+/* Release one group's GPU resources and mask path.  Its id and effect
+ * parameters stay, so the mask is simply reloaded on the next frame. */
+static void shutdown_dyn_group(swapchain_data_t* data, dyn_group_t* g)
 {
         device_data_t* device_data = data->device_data;
 
-        if (data->dynamic_mask.image_view) {
+        if (g->image_view) {
                 device_data->vtable.DestroyImageView(device_data->device,
-                                                     data->dynamic_mask.image_view, NULL);
-                data->dynamic_mask.image_view = VK_NULL_HANDLE;
+                                                     g->image_view, NULL);
+                g->image_view = VK_NULL_HANDLE;
         }
-        if (data->dynamic_mask.image) {
+        if (g->image) {
                 device_data->vtable.DestroyImage(device_data->device,
-                                                 data->dynamic_mask.image, NULL);
-                data->dynamic_mask.image = VK_NULL_HANDLE;
+                                                 g->image, NULL);
+                g->image = VK_NULL_HANDLE;
         }
-        if (data->dynamic_mask.mem) {
-                device_data->vtable.FreeMemory(device_data->device,
-                                               data->dynamic_mask.mem, NULL);
-                data->dynamic_mask.mem = VK_NULL_HANDLE;
+        if (g->mem) {
+                device_data->vtable.FreeMemory(device_data->device, g->mem, NULL);
+                g->mem = VK_NULL_HANDLE;
         }
-        if (data->dynamic_mask.upload_buffer) {
+        if (g->upload_buffer) {
                 device_data->vtable.DestroyBuffer(device_data->device,
-                                                  data->dynamic_mask.upload_buffer, NULL);
-                data->dynamic_mask.upload_buffer = VK_NULL_HANDLE;
+                                                  g->upload_buffer, NULL);
+                g->upload_buffer = VK_NULL_HANDLE;
         }
-        if (data->dynamic_mask.upload_buffer_mem) {
+        if (g->upload_buffer_mem) {
                 device_data->vtable.FreeMemory(device_data->device,
-                                               data->dynamic_mask.upload_buffer_mem, NULL);
-                data->dynamic_mask.upload_buffer_mem = VK_NULL_HANDLE;
+                                               g->upload_buffer_mem, NULL);
+                g->upload_buffer_mem = VK_NULL_HANDLE;
         }
-
-        if (data->dynamic_mask.descriptor_set && data->descriptor_pool) {
+        if (g->descriptor_set && data->descriptor_pool) {
                 device_data->vtable.FreeDescriptorSets(
                     device_data->device, data->descriptor_pool, 1,
-                    &data->dynamic_mask.descriptor_set);
+                    &g->descriptor_set);
         }
-        data->dynamic_mask.descriptor_set = VK_NULL_HANDLE;
-        data->dynamic_mask.tex_width = 0;
+        g->descriptor_set = VK_NULL_HANDLE;
+        g->shader_set     = VK_NULL_HANDLE; /* owned by shader_desc_pool */
+        g->tex_width      = 0;
+        g->uploaded       = 0;
+        free(g->path);
+        g->path = NULL;
+}
+
+/* Release every group's GPU resources (groups stay configured). */
+static void shutdown_dynamic_mask(swapchain_data_t* data)
+{
+        for (int i = 0; i < data->dyn_count; i++)
+                shutdown_dyn_group(data, &data->dyn_groups[i]);
 }
 
 static void destroy_draw(swapchain_data_t* data, krosshair_draw_t* draw);
@@ -1081,10 +1142,7 @@ static void destroy_swapchain_data(swapchain_data_t* data)
                 free(data->crosshair_path);
                 data->crosshair_path = NULL;
         }
-        if (data->dynamic_mask.path) {
-                free(data->dynamic_mask.path);
-                data->dynamic_mask.path = NULL;
-        }
+        data->dyn_count = 0;
         if (data->dynamic_cfg_path) {
                 free(data->dynamic_cfg_path);
                 data->dynamic_cfg_path = NULL;
@@ -1389,8 +1447,9 @@ static char* get_crosshair_path(void)
 }
 
 // malloc's returned string, free later
-// returns the path to {stem}.dynamic.png, or NULL if absent
-static char* get_dynamic_mask_path(void)
+// returns the path to group `id`'s mask (current.dynamic.png for 0,
+// current.dynamic.<id>.png otherwise), or NULL if absent
+static char* get_dynamic_mask_path(int id)
 {
         const char* home = getenv("HOME");
         if (!home) return NULL;
@@ -1398,9 +1457,14 @@ static char* get_dynamic_mask_path(void)
         char cm_path[4096];
         struct stat st;
 
-        snprintf(cm_path, sizeof(cm_path),
-                 "%s/.config/crosshair-maker/projects/current.dynamic.png",
-                 home);
+        if (id == 0)
+                snprintf(cm_path, sizeof(cm_path),
+                         "%s/.config/crosshair-maker/projects/current.dynamic.png",
+                         home);
+        else
+                snprintf(cm_path, sizeof(cm_path),
+                         "%s/.config/crosshair-maker/projects/current.dynamic.%d.png",
+                         home, id);
         if (stat(cm_path, &st) == 0)
                 return strdup(cm_path);
 
@@ -2126,68 +2190,30 @@ static void ensure_swapchain_crosshair(swapchain_data_t* data,
         data->crosshair_uploaded = 1;
 }
 
-/*
- * Load the single dynamic mask + parse the config file.
- * Both are optional — if no mask file exists, nothing happens.
- */
-static void ensure_swapchain_dynamic_mask(swapchain_data_t* data,
-                                          VkCommandBuffer cmd_buffer)
+/* Upload (or re-upload) one group's mask if its file changed. */
+static void ensure_dyn_group_mask(swapchain_data_t* data, dyn_group_t* g,
+                                  VkCommandBuffer cmd_buffer)
 {
         device_data_t* device_data = data->device_data;
 
-        char* mpath = get_dynamic_mask_path();
-        int using_file = (mpath != NULL);
-
-        /* ── check for mask image reload ── */
-        if (data->dynamic_mask.uploaded) {
-                int needs_reload = 0;
-
-                if (using_file && data->dynamic_mask.path) {
-                        if (strcmp(data->dynamic_mask.path, mpath) != 0) {
-                                needs_reload = 1;
-                        } else {
-                                struct timespec new_mtime;
-                                if (get_file_mtime(mpath, &new_mtime) == 0) {
-                                        if (new_mtime.tv_sec != data->dynamic_mask.mtime.tv_sec ||
-                                            new_mtime.tv_nsec != data->dynamic_mask.mtime.tv_nsec) {
-                                                needs_reload = 1;
-                                        }
-                                }
-                        }
-                } else if (!using_file && data->dynamic_mask.path) {
-                        shutdown_dynamic_mask(data);
-                        data->dynamic_mask.uploaded = 0;
-                        free(data->dynamic_mask.path);
-                        data->dynamic_mask.path = NULL;
-                        free(mpath);
-                        return;
-                }
-
-                if (!needs_reload) {
-                        free(mpath);
-                        /* still check cfg for hot-reload */
-                        goto check_cfg;
-                }
-
-                shutdown_dynamic_mask(data);
-                data->dynamic_mask.uploaded = 0;
-                free(data->dynamic_mask.path);
-                data->dynamic_mask.path = NULL;
-                /* invalidate shader desc set so it gets re-created */
-                if (data->shader_desc_pool) {
-                        device_data->vtable.ResetDescriptorPool(
-                            device_data->device, data->shader_desc_pool, 0);
-                        data->shader_mask_desc_set = VK_NULL_HANDLE;
-                }
-        }
-
-        if (!using_file) {
-                free(mpath);
+        char* mpath = get_dynamic_mask_path(g->id);
+        if (!mpath) {
+                if (g->uploaded) shutdown_dyn_group(data, g);
                 return;
         }
 
         struct timespec pre_mtime = {0, 0};
         get_file_mtime(mpath, &pre_mtime);
+
+        if (g->uploaded) {
+                if (g->path && strcmp(g->path, mpath) == 0 &&
+                    pre_mtime.tv_sec == g->mtime.tv_sec &&
+                    pre_mtime.tv_nsec == g->mtime.tv_nsec) {
+                        free(mpath);
+                        return;
+                }
+                shutdown_dyn_group(data, g);
+        }
 
         int tex_width, tex_height, tex_channels;
         stbi_uc* pixels = stbi_load(mpath, &tex_width, &tex_height,
@@ -2201,67 +2227,109 @@ static void ensure_swapchain_dynamic_mask(swapchain_data_t* data,
 
         VkDeviceSize image_size = (VkDeviceSize)tex_width * tex_height * 4;
 
-        data->dynamic_mask.descriptor_set = create_image_with_desc(
+        g->descriptor_set = create_image_with_desc(
             data, tex_width, tex_height, VK_FORMAT_R8G8B8A8_UNORM,
-            &data->dynamic_mask.image, &data->dynamic_mask.mem,
-            &data->dynamic_mask.image_view);
+            &g->image, &g->mem, &g->image_view);
 
         upload_image_data(
             device_data, cmd_buffer, pixels, image_size, tex_width,
-            tex_height, &data->dynamic_mask.upload_buffer,
-            &data->dynamic_mask.upload_buffer_mem, data->dynamic_mask.image);
+            tex_height, &g->upload_buffer, &g->upload_buffer_mem, g->image);
         stbi_image_free(pixels);
 
-        data->dynamic_mask.path = mpath;
-        data->dynamic_mask.mtime = pre_mtime;
-        data->dynamic_mask.tex_width = tex_width;
+        g->path      = mpath;
+        g->mtime     = pre_mtime;
+        g->tex_width = tex_width;
 
-        setup_vertices(data->dynamic_mask.vertices,
+        setup_vertices(g->vertices,
                        (float)data->width, (float)data->height,
                        (float)tex_height, (float)tex_width, 1.0f);
 
-        data->dynamic_mask.uploaded = 1;
-        KROSSHAIR_LOG("[KROSSHAIR] loaded dynamic mask from: %s\n", mpath);
+        g->uploaded = 1;
+        KROSSHAIR_LOG("[KROSSHAIR] loaded dynamic mask %d from: %s\n", g->id, mpath);
 
-        /* invalidate shader desc set so it gets re-created with new image view */
+        /* the per-frame shader sets reference the old image views */
         if (data->shader_desc_pool) {
                 device_data->vtable.ResetDescriptorPool(
                     device_data->device, data->shader_desc_pool, 0);
-                data->shader_mask_desc_set = VK_NULL_HANDLE;
+                for (int i = 0; i < data->dyn_count; i++)
+                        data->dyn_groups[i].shader_set = VK_NULL_HANDLE;
         }
+}
 
-check_cfg:
-        /* ── check for config file reload ── */
-        {
-                char* cfg_path = get_dynamic_cfg_path();
-                int cfg_exists = (cfg_path != NULL);
+/*
+ * Reconcile the active groups with the cfg (any number of groups, added or
+ * removed at any time), then load/refresh each group's mask.  Everything is
+ * optional: no cfg means nothing is drawn.
+ */
+static void ensure_swapchain_dynamic_mask(swapchain_data_t* data,
+                                          VkCommandBuffer cmd_buffer)
+{
+        device_data_t* device_data = data->device_data;
 
-                if (cfg_exists && data->dynamic_cfg_path) {
-                        struct timespec new_mtime;
-                        if (get_file_mtime(cfg_path, &new_mtime) == 0) {
-                                if (new_mtime.tv_sec != data->dynamic_cfg_mtime.tv_sec ||
-                                    new_mtime.tv_nsec != data->dynamic_cfg_mtime.tv_nsec) {
-                                        parse_dynamic_cfg(cfg_path, &data->dynamic_pc);
-                                        data->dynamic_cfg_mtime = new_mtime;
-                                        KROSSHAIR_LOG("[KROSSHAIR] reloaded dynamic cfg: %s\n", cfg_path);
-                                }
-                        }
-                } else if (cfg_exists) {
-                        /* first time loading cfg */
-                        parse_dynamic_cfg(cfg_path, &data->dynamic_pc);
-                        get_file_mtime(cfg_path, &data->dynamic_cfg_mtime);
-                        data->dynamic_cfg_path = cfg_path;
-                        cfg_path = NULL; /* don't free, ownership transferred */
-                        KROSSHAIR_LOG("[KROSSHAIR] loaded dynamic cfg: %s\n", data->dynamic_cfg_path);
-                } else if (!cfg_exists && data->dynamic_cfg_path) {
-                        /* cfg file was removed */
-                        parse_dynamic_cfg(NULL, &data->dynamic_pc);
+        char* cfg_path = get_dynamic_cfg_path();
+        if (!cfg_path) {
+                if (data->dynamic_cfg_path || data->dyn_count) {
+                        shutdown_dynamic_mask(data);
+                        data->dyn_count = 0;
                         free(data->dynamic_cfg_path);
                         data->dynamic_cfg_path = NULL;
                 }
-
-                free(cfg_path);
+                return;
         }
+
+        /* stat BEFORE reading so a write landing mid-parse is seen next frame */
+        struct timespec cfg_mtime;
+        int have_mtime = (get_file_mtime(cfg_path, &cfg_mtime) == 0);
+        int changed = !data->dynamic_cfg_path ||
+                      strcmp(data->dynamic_cfg_path, cfg_path) != 0 ||
+                      (have_mtime &&
+                       (cfg_mtime.tv_sec != data->dynamic_cfg_mtime.tv_sec ||
+                        cfg_mtime.tv_nsec != data->dynamic_cfg_mtime.tv_nsec));
+
+        if (changed) {
+                int ids[KROSSHAIR_MAX_DYN_GROUPS];
+                struct dynamic_push_constants pcs[KROSSHAIR_MAX_DYN_GROUPS];
+                int n = parse_dynamic_cfg(cfg_path, ids, pcs, KROSSHAIR_MAX_DYN_GROUPS);
+
+                /* keep GPU state for groups that persist, drop the rest */
+                dyn_group_t next[KROSSHAIR_MAX_DYN_GROUPS];
+                memset(next, 0, sizeof(next));
+                char used[KROSSHAIR_MAX_DYN_GROUPS] = {0};
+                for (int i = 0; i < n; i++) {
+                        for (int j = 0; j < data->dyn_count; j++) {
+                                if (!used[j] && data->dyn_groups[j].id == ids[i]) {
+                                        next[i] = data->dyn_groups[j];
+                                        used[j] = 1;
+                                        break;
+                                }
+                        }
+                        next[i].id = ids[i];
+                        next[i].pc = pcs[i];
+                }
+                for (int j = 0; j < data->dyn_count; j++)
+                        if (!used[j]) shutdown_dyn_group(data, &data->dyn_groups[j]);
+
+                int removed = 0;
+                for (int j = 0; j < data->dyn_count; j++) removed |= !used[j];
+                memcpy(data->dyn_groups, next, sizeof(next));
+                data->dyn_count = n;
+                if (removed && data->shader_desc_pool) {
+                        device_data->vtable.ResetDescriptorPool(
+                            device_data->device, data->shader_desc_pool, 0);
+                        for (int i = 0; i < n; i++)
+                                data->dyn_groups[i].shader_set = VK_NULL_HANDLE;
+                }
+
+                free(data->dynamic_cfg_path);
+                data->dynamic_cfg_path = cfg_path;
+                cfg_path = NULL;
+                if (have_mtime) data->dynamic_cfg_mtime = cfg_mtime;
+                KROSSHAIR_LOG("[KROSSHAIR] loaded dynamic cfg: %d group(s)\n", n);
+        }
+        free(cfg_path);
+
+        for (int i = 0; i < data->dyn_count; i++)
+                ensure_dyn_group_mask(data, &data->dyn_groups[i], cmd_buffer);
 }
 
 /* allocated a krosshair_draw_t instance that must be free'd at the end of its
@@ -2408,9 +2476,14 @@ static krosshair_draw_t* render_swapchain_display(
 
         /* Pooled sampling (sample size > 1) needs neighbouring pixels, which
          * an input attachment cannot read: copy the frame to a texture. */
-        int need_snapshot = data->dynamic_mask.uploaded && data->shader_pipeline &&
-                            data->dynamic_pc.sample_size > 1 &&
-                            ensure_game_fb_copy(data);
+        int any_pooled = 0, any_uploaded = 0;
+        for (int i = 0; i < data->dyn_count; i++) {
+                if (!data->dyn_groups[i].uploaded) continue;
+                any_uploaded = 1;
+                if (data->dyn_groups[i].pc.sample_size > 1) any_pooled = 1;
+        }
+        int need_snapshot = any_uploaded && data->shader_pipeline &&
+                            any_pooled && ensure_game_fb_copy(data);
 
         /* transition swapchain: PRESENT_SRC → GENERAL (used as both
          * color attachment and input attachment in the same render pass) */
@@ -2561,11 +2634,13 @@ static krosshair_draw_t* render_swapchain_display(
         scissor.extent.height = data->height;
         device_data->vtable.CmdSetScissor(draw->cmd_buffer, 0, 1, &scissor);
 
-        /* ── dynamic effect mask draw FIRST (reads original game pixels
-         * via input attachment — must run before crosshair modifies them) ── */
-        if (data->dynamic_mask.uploaded && data->shader_pipeline) {
-                /* ensure vertex_buffer2 exists for dynamic mask */
-                size_t vtx2_size = sizeof(data->dynamic_mask.vertices);
+        /* ── dynamic effect groups draw FIRST (read original game pixels
+         * via input attachment — must run before crosshair modifies them).
+         * One quad per group; group masks never overlap (anything layered
+         * above a group is cut out of its mask by the maker). ── */
+        if (any_uploaded && data->shader_pipeline) {
+                size_t slot = sizeof(((dyn_group_t*)0)->vertices);
+                size_t vtx2_size = slot * (size_t)data->dyn_count;
                 if (draw->vertex_buffer2_size < vtx2_size) {
                         create_or_resize_buffer(device_data, &draw->vertex_buffer2,
                                                 &draw->vertex_buffer2_mem,
@@ -2575,9 +2650,10 @@ static krosshair_draw_t* render_swapchain_display(
                                                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
                 }
 
-                /* upload dynamic mask vertices via persistent mapping */
-                memcpy(draw->vertex_buffer2_map, data->dynamic_mask.vertices,
-                       sizeof(data->dynamic_mask.vertices));
+                /* every group's quad lives at its own slot in the buffer */
+                for (int i = 0; i < data->dyn_count; i++)
+                        memcpy((char*)draw->vertex_buffer2_map + slot * i,
+                               data->dyn_groups[i].vertices, slot);
 
                 VkMappedMemoryRange vtx_range = {};
                 vtx_range.sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
@@ -2589,31 +2665,32 @@ static krosshair_draw_t* render_swapchain_display(
                 device_data->vtable.CmdBindPipeline(
                     draw->cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     data->shader_pipeline);
-
-                VkDeviceSize mask_offsets[1] = {0};
-                device_data->vtable.CmdBindVertexBuffers(
-                    draw->cmd_buffer, 0, 1, &draw->vertex_buffer2, mask_offsets);
                 device_data->vtable.CmdBindIndexBuffer(
                     draw->cmd_buffer, draw->index_buffer, 0, VK_INDEX_TYPE_UINT16);
 
-                /* allocate descriptor set if needed */
-                if (!data->shader_mask_desc_set) {
-                        VkDescriptorSetAllocateInfo dsai = {};
-                        dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-                        dsai.descriptorPool     = data->shader_desc_pool;
-                        dsai.descriptorSetCount = 1;
-                        dsai.pSetLayouts        = &data->shader_desc_layout;
-                        VK_CHECK(device_data->vtable.AllocateDescriptorSets(
-                            device_data->device, &dsai,
-                            &data->shader_mask_desc_set));
-                }
+                for (int gi = 0; gi < data->dyn_count; gi++) {
+                        dyn_group_t* g = &data->dyn_groups[gi];
+                        if (!g->uploaded) continue;
 
-                /* update descriptor set every frame: binding 1 (input attachment)
-                 * references the current swapchain image which varies per frame */
-                {
+                        VkDeviceSize mask_offsets[1] = {slot * gi};
+                        device_data->vtable.CmdBindVertexBuffers(
+                            draw->cmd_buffer, 0, 1, &draw->vertex_buffer2, mask_offsets);
+
+                        if (!g->shader_set) {
+                                VkDescriptorSetAllocateInfo dsai = {};
+                                dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                                dsai.descriptorPool     = data->shader_desc_pool;
+                                dsai.descriptorSetCount = 1;
+                                dsai.pSetLayouts        = &data->shader_desc_layout;
+                                VK_CHECK(device_data->vtable.AllocateDescriptorSets(
+                                    device_data->device, &dsai, &g->shader_set));
+                        }
+
+                        /* update every frame: binding 1 (input attachment)
+                         * references the current swapchain image */
                         VkDescriptorImageInfo di_mask = {};
                         di_mask.sampler     = data->crosshair_sampler;
-                        di_mask.imageView   = data->dynamic_mask.image_view;
+                        di_mask.imageView   = g->image_view;
                         di_mask.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
                         VkDescriptorImageInfo di_fb = {};
@@ -2625,54 +2702,51 @@ static krosshair_draw_t* render_swapchain_display(
                         VkDescriptorImageInfo di_copy = {};
                         di_copy.sampler     = data->crosshair_sampler;
                         di_copy.imageView   = need_snapshot ? data->game_fb_image_view
-                                                            : data->dynamic_mask.image_view;
+                                                            : g->image_view;
                         di_copy.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
                         VkWriteDescriptorSet writes[3] = {};
                         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                        writes[0].dstSet          = data->shader_mask_desc_set;
+                        writes[0].dstSet          = g->shader_set;
                         writes[0].dstBinding      = 0;
                         writes[0].descriptorCount = 1;
                         writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                         writes[0].pImageInfo      = &di_mask;
                         writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                        writes[1].dstSet          = data->shader_mask_desc_set;
+                        writes[1].dstSet          = g->shader_set;
                         writes[1].dstBinding      = 1;
                         writes[1].descriptorCount = 1;
                         writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
                         writes[1].pImageInfo      = &di_fb;
                         writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                        writes[2].dstSet          = data->shader_mask_desc_set;
+                        writes[2].dstSet          = g->shader_set;
                         writes[2].dstBinding      = 2;
                         writes[2].descriptorCount = 1;
                         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                         writes[2].pImageInfo      = &di_copy;
                         device_data->vtable.UpdateDescriptorSets(
                             device_data->device, 3, writes, 0, NULL);
+
+                        device_data->vtable.CmdBindDescriptorSets(
+                            draw->cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            data->shader_pipeline_layout, 0, 1,
+                            &g->shader_set, 0, NULL);
+
+                        g->pc.quad_ndc_min[0]  = g->vertices[0].pos.x;
+                        g->pc.quad_ndc_min[1]  = g->vertices[0].pos.y;
+                        g->pc.quad_ndc_size[0] = g->vertices[2].pos.x - g->vertices[0].pos.x;
+                        g->pc.quad_ndc_size[1] = g->vertices[2].pos.y - g->vertices[0].pos.y;
+
+                        device_data->vtable.CmdPushConstants(
+                            draw->cmd_buffer, data->shader_pipeline_layout,
+                            VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                            sizeof(g->pc), &g->pc);
+
+                        device_data->vtable.CmdDrawIndexed(
+                            draw->cmd_buffer,
+                            sizeof(indices) / sizeof(indices[0]),
+                            1, 0, 0, 0);
                 }
-
-                device_data->vtable.CmdBindDescriptorSets(
-                    draw->cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    data->shader_pipeline_layout, 0, 1,
-                    &data->shader_mask_desc_set, 0, NULL);
-
-                /* fill quad NDC bounds into push constants */
-                data->dynamic_pc.quad_ndc_min[0]  = data->dynamic_mask.vertices[0].pos.x;
-                data->dynamic_pc.quad_ndc_min[1]  = data->dynamic_mask.vertices[0].pos.y;
-                data->dynamic_pc.quad_ndc_size[0] = data->dynamic_mask.vertices[2].pos.x -
-                                                    data->dynamic_mask.vertices[0].pos.x;
-                data->dynamic_pc.quad_ndc_size[1] = data->dynamic_mask.vertices[2].pos.y -
-                                                    data->dynamic_mask.vertices[0].pos.y;
-
-                device_data->vtable.CmdPushConstants(
-                    draw->cmd_buffer, data->shader_pipeline_layout,
-                    VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                    sizeof(data->dynamic_pc), &data->dynamic_pc);
-
-                device_data->vtable.CmdDrawIndexed(
-                    draw->cmd_buffer,
-                    sizeof(indices) / sizeof(indices[0]),
-                    1, 0, 0, 0);
         }
 
         /* ── crosshair draw (on top of dynamic mask effects) ── */
@@ -2844,11 +2918,11 @@ static void setup_swapchain_data_pipeline(swapchain_data_t* data)
 
         VkDescriptorPoolSize sampler_pool_size = {};
         sampler_pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        sampler_pool_size.descriptorCount         = 1 + 1; /* crosshair + dynamic mask */
+        sampler_pool_size.descriptorCount         = 1 + KROSSHAIR_MAX_DYN_GROUPS; /* crosshair + dynamic masks */
 
         VkDescriptorPoolCreateInfo desc_pool_info = {};
         desc_pool_info.sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        desc_pool_info.maxSets = 1 + 1;
+        desc_pool_info.maxSets = 1 + KROSSHAIR_MAX_DYN_GROUPS;
         /* sets are freed individually when only the dynamic mask reloads;
          * without this the pool runs dry after one mask-only reload */
         desc_pool_info.flags   = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -3069,13 +3143,13 @@ static void setup_swapchain_data_pipeline(swapchain_data_t* data)
                 /* descriptor pool: 1 sampler (mask) + 1 input attachment (game FB) */
                 VkDescriptorPoolSize sp_sizes[2] = {};
                 sp_sizes[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                sp_sizes[0].descriptorCount = 2;
+                sp_sizes[0].descriptorCount = 2 * KROSSHAIR_MAX_DYN_GROUPS;
                 sp_sizes[1].type            = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
-                sp_sizes[1].descriptorCount = 1;
+                sp_sizes[1].descriptorCount = KROSSHAIR_MAX_DYN_GROUPS;
 
                 VkDescriptorPoolCreateInfo sp_info = {};
                 sp_info.sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-                sp_info.maxSets = 1;
+                sp_info.maxSets = KROSSHAIR_MAX_DYN_GROUPS;
                 sp_info.poolSizeCount = 2;
                 sp_info.pPoolSizes    = sp_sizes;
                 VK_CHECK(device_data->vtable.CreateDescriptorPool(
