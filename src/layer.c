@@ -1172,7 +1172,7 @@ static int get_file_mtime(const char* path, struct timespec* mtime)
 
 // malloc's returned string, free later
 // returns crosshair-maker default if installed and no explicit KROSSHAIR_IMG set
-// tries current.apng first, then current.gif, then current.png
+// picks the newest of current.apng / current.gif / current.png
 static char* get_crosshair_path(void)
 {
         const char* explicit = getenv("KROSSHAIR_IMG");
@@ -1186,21 +1186,32 @@ static char* get_crosshair_path(void)
         char cm_path[4096];
         struct stat st;
 
-        /* prefer animated formats first, then static PNG */
-        snprintf(cm_path, sizeof(cm_path),
-                 "%s/.config/crosshair-maker/projects/current.apng", home);
-        if (stat(cm_path, &st) == 0)
+        /* crosshair-maker keeps only one of these, but an old export can be
+         * left behind (e.g. a stale .gif shadowing a fresh .png), so pick
+         * whichever was written most recently. */
+        static const char* const names[] = {"current.apng", "current.gif",
+                                            "current.png"};
+        int best = -1;
+        struct timespec best_mtime = {0, 0};
+        for (int i = 0; i < 3; i++) {
+                snprintf(cm_path, sizeof(cm_path),
+                         "%s/.config/crosshair-maker/projects/%s", home,
+                         names[i]);
+                if (stat(cm_path, &st) != 0)
+                        continue;
+                if (best < 0 || st.st_mtim.tv_sec > best_mtime.tv_sec ||
+                    (st.st_mtim.tv_sec == best_mtime.tv_sec &&
+                     st.st_mtim.tv_nsec > best_mtime.tv_nsec)) {
+                        best       = i;
+                        best_mtime = st.st_mtim;
+                }
+        }
+        if (best >= 0) {
+                snprintf(cm_path, sizeof(cm_path),
+                         "%s/.config/crosshair-maker/projects/%s", home,
+                         names[best]);
                 return strdup(cm_path);
-
-        snprintf(cm_path, sizeof(cm_path),
-                 "%s/.config/crosshair-maker/projects/current.gif", home);
-        if (stat(cm_path, &st) == 0)
-                return strdup(cm_path);
-
-        snprintf(cm_path, sizeof(cm_path),
-                 "%s/.config/crosshair-maker/projects/current.png", home);
-        if (stat(cm_path, &st) == 0)
-                return strdup(cm_path);
+        }
 
         return NULL;
 }
@@ -2506,12 +2517,17 @@ static krosshair_draw_t* render_swapchain_display(
         scissor.extent.height = data->height;
         device_data->vtable.CmdSetScissor(draw->cmd_buffer, 0, 1, &scissor);
 
-        device_data->vtable.CmdBindDescriptorSets(
-            draw->cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            data->pipeline_layout, 0, 1, &data->descriptor_set, 0, NULL);
-        device_data->vtable.CmdDrawIndexed(draw->cmd_buffer,
-                                            sizeof(indices) / sizeof(indices[0]),
-                                            1, 0, 0, 0);
+        /* A reload may have failed (e.g. file mid-write or removed): the old
+         * image is already torn down, so there is nothing valid to bind.
+         * Skip the draw; ensure_swapchain_crosshair retries next frame. */
+        if (data->crosshair_uploaded && data->descriptor_set) {
+                device_data->vtable.CmdBindDescriptorSets(
+                    draw->cmd_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    data->pipeline_layout, 0, 1, &data->descriptor_set, 0, NULL);
+                device_data->vtable.CmdDrawIndexed(draw->cmd_buffer,
+                                                    sizeof(indices) / sizeof(indices[0]),
+                                                    1, 0, 0, 0);
+        }
 
         /* ── single dynamic effect mask draw (optional) ──
          * Uses the shader pipeline that samples the game FB copy.
