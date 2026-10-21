@@ -1008,6 +1008,21 @@ static void create_image(swapchain_data_t* data, VkDescriptorSet descriptor_set,
         update_image_descriptor(data, *image_view, descriptor_set);
 }
 
+/* The crosshair PNG holds sRGB-encoded colors.  To reproduce them exactly the
+ * texture must be decoded only if the swapchain re-encodes on write: use an
+ * SRGB texture for SRGB swapchains and UNORM (raw values) otherwise. */
+static VkFormat crosshair_tex_format(const swapchain_data_t* data)
+{
+        switch (data->format) {
+        case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_A8B8G8R8_SRGB_PACK32:
+                return VK_FORMAT_R8G8B8A8_SRGB;
+        default:
+                return VK_FORMAT_R8G8B8A8_UNORM;
+        }
+}
+
 static VkDescriptorSet create_image_with_desc(swapchain_data_t* data,
                                               uint32_t width, uint32_t height,
                                               VkFormat format, VkImage* image,
@@ -1894,7 +1909,7 @@ static void ensure_swapchain_crosshair(swapchain_data_t* data,
                 }
 
                 data->descriptor_set = create_image_with_desc(
-                    data, tex_width, tex_height, VK_FORMAT_R8G8B8A8_SRGB,
+                    data, tex_width, tex_height, crosshair_tex_format(data),
                     &data->crosshair_image, &data->crosshair_mem,
                     &data->crosshair_image_view);
 
@@ -1917,7 +1932,7 @@ static void ensure_swapchain_crosshair(swapchain_data_t* data,
                 image_size           = tex_width * tex_height * 4;
 
                 data->descriptor_set = create_image_with_desc(
-                    data, tex_width, tex_height, VK_FORMAT_R8G8B8A8_SRGB,
+                    data, tex_width, tex_height, crosshair_tex_format(data),
                     &data->crosshair_image, &data->crosshair_mem,
                     &data->crosshair_image_view);
 
@@ -2021,7 +2036,7 @@ static void ensure_swapchain_dynamic_mask(swapchain_data_t* data,
         VkDeviceSize image_size = (VkDeviceSize)tex_width * tex_height * 4;
 
         data->dynamic_mask.descriptor_set = create_image_with_desc(
-            data, tex_width, tex_height, VK_FORMAT_R8G8B8A8_SRGB,
+            data, tex_width, tex_height, VK_FORMAT_R8G8B8A8_UNORM,
             &data->dynamic_mask.image, &data->dynamic_mask.mem,
             &data->dynamic_mask.image_view);
 
@@ -2762,9 +2777,9 @@ static void setup_swapchain_data_pipeline(swapchain_data_t* data)
 
         VkSamplerCreateInfo sampler_info = {};
         sampler_info.sType         = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        sampler_info.magFilter     = VK_FILTER_LINEAR;
-        sampler_info.minFilter     = VK_FILTER_LINEAR;
-        sampler_info.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler_info.magFilter     = VK_FILTER_NEAREST; /* pixel-exact, like maker's preview */
+        sampler_info.minFilter     = VK_FILTER_NEAREST;
+        sampler_info.mipmapMode    = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         sampler_info.addressModeU  = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         sampler_info.addressModeV  = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         sampler_info.addressModeW  = VK_SAMPLER_ADDRESS_MODE_REPEAT;
