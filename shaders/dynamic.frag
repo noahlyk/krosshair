@@ -5,8 +5,10 @@ layout(location = 0) out vec4 out_color;
 
 layout(binding = 0) uniform sampler2D mask_sampler;
 layout(input_attachment_index = 0, binding = 1) uniform subpassInput game_fb_input;
+// Copy of the game frame, only sampled when sample_size > 1 (neighbour access).
+layout(binding = 2) uniform sampler2D game_fb_copy;
 
-// Push constants: 76 bytes total.  Fixed processing order.
+// Push constants: 88 bytes total.  Fixed processing order.
 layout(push_constant) uniform PushConstants {
     vec2 quad_ndc_min;       // NDC min corner of the mask quad
     vec2 quad_ndc_size;      // NDC size of the mask quad
@@ -26,6 +28,8 @@ layout(push_constant) uniform PushConstants {
     float saturate_str;      // Saturate strength
     float saturate_amount;   // Saturate amount (0-1)
     float opacity;           // Overall effect opacity (0-1)
+    int sample_size;         // Odd width of the pooled area (1 = just this pixel)
+    int pool_mode;           // 0 = average, 1 = max, 2 = min
 } pc;
 
 // ── RGB <-> HSL conversions ──────────────────────────────────────
@@ -75,13 +79,32 @@ vec3 hsl_to_rgb(vec3 hsl) {
     );
 }
 
+// Pool the sample_size x sample_size area of the game frame around this pixel.
+vec3 pooled_pixel() {
+    ivec2 center = ivec2(gl_FragCoord.xy);
+    ivec2 hi = textureSize(game_fb_copy, 0) - ivec2(1);
+    int r = pc.sample_size / 2;
+    vec3 acc = (pc.pool_mode == 2) ? vec3(1.0) : vec3(0.0);
+    for (int dy = -r; dy <= r; dy++) {
+        for (int dx = -r; dx <= r; dx++) {
+            vec3 p = texelFetch(game_fb_copy, clamp(center + ivec2(dx, dy), ivec2(0), hi), 0).rgb;
+            if (pc.pool_mode == 1) acc = max(acc, p);
+            else if (pc.pool_mode == 2) acc = min(acc, p);
+            else acc += p;
+        }
+    }
+    if (pc.pool_mode == 0) acc /= float(pc.sample_size * pc.sample_size);
+    return acc;
+}
+
 void main() {
     // Continuous mask: use red channel (grayscale) as blend factor
     float mask = texture(mask_sampler, frag_tex_coord).r;
     if (mask < 0.004) discard; // ~1/255, skip fully transparent pixels
 
     // Read game framebuffer via input attachment (no copy needed)
-    vec3 original = subpassLoad(game_fb_input).rgb;
+    vec3 raw = subpassLoad(game_fb_input).rgb;
+    vec3 original = (pc.sample_size > 1) ? pooled_pixel() : raw;
     vec3 color = original;
 
     // Fixed order: invert → dodge → burn → complement → luma_invert → hue_rotate → saturate
@@ -133,7 +156,7 @@ void main() {
     }
 
     // Apply overall opacity, then blend by mask alpha (supports anti-aliased edges)
-    color = mix(original, color, mask * pc.opacity);
+    color = mix(raw, mix(original, color, pc.opacity), mask);
 
     out_color = vec4(color, 1.0);
 }
