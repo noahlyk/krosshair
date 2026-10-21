@@ -1735,6 +1735,12 @@ static void ensure_swapchain_crosshair(swapchain_data_t* data,
         VkDeviceSize image_size;
         stbi_uc* pixels;
 
+        /* Stat BEFORE reading: if the file is replaced while we load it, the
+         * recorded mtime is the old one and the next frame reloads again. */
+        struct timespec pre_mtime = {0, 0};
+        if (using_file)
+                get_file_mtime(crosshair_path, &pre_mtime);
+
         if (using_file) {
                 const char* ext = strrchr(crosshair_path, '.');
                 int is_gif = ext && (strcasecmp(ext, ".gif") == 0);
@@ -1940,7 +1946,7 @@ static void ensure_swapchain_crosshair(swapchain_data_t* data,
                 stbi_image_free(pixels);
 
                 data->crosshair_path = crosshair_path;
-                get_file_mtime(crosshair_path, &data->crosshair_mtime);
+                data->crosshair_mtime = pre_mtime;
                 KROSSHAIR_LOG("[KROSSHAIR] loaded crosshair from: %s (mtime %ld.%ld)\n",
                               crosshair_path,
                               data->crosshair_mtime.tv_sec,
@@ -2043,6 +2049,9 @@ static void ensure_swapchain_dynamic_mask(swapchain_data_t* data,
                 return;
         }
 
+        struct timespec pre_mtime = {0, 0};
+        get_file_mtime(mpath, &pre_mtime);
+
         int tex_width, tex_height, tex_channels;
         stbi_uc* pixels = stbi_load(mpath, &tex_width, &tex_height,
                                     &tex_channels, STBI_rgb_alpha);
@@ -2067,7 +2076,7 @@ static void ensure_swapchain_dynamic_mask(swapchain_data_t* data,
         stbi_image_free(pixels);
 
         data->dynamic_mask.path = mpath;
-        get_file_mtime(mpath, &data->dynamic_mask.mtime);
+        data->dynamic_mask.mtime = pre_mtime;
         data->dynamic_mask.tex_width = tex_width;
 
         setup_vertices(data->dynamic_mask.vertices,
@@ -2360,7 +2369,10 @@ static krosshair_draw_t* render_swapchain_display(
                 draw->index_buffer_initialized = 0;
         }
 
-        if (!draw->vertex_buffer_initialized) {
+        /* Always re-upload: every in-flight draw owns its own buffer, so a
+         * flag reset on one of them left the others with stale geometry/UVs
+         * after a hot reload changed the image size or animation state. */
+        {
                 memcpy(draw->vertex_buffer_map, data->vertices,
                        sizeof(data->vertices));
 
