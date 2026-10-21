@@ -4,7 +4,7 @@ layout(location = 0) in vec2 frag_tex_coord;
 layout(location = 0) out vec4 out_color;
 
 layout(binding = 0) uniform sampler2D mask_sampler;
-layout(binding = 1) uniform sampler2D game_fb_sampler;
+layout(input_attachment_index = 0, binding = 1) uniform subpassInput game_fb_input;
 
 // Push constants: 76 bytes total.  Fixed processing order.
 layout(push_constant) uniform PushConstants {
@@ -80,10 +80,8 @@ void main() {
     float mask = texture(mask_sampler, frag_tex_coord).r;
     if (mask < 0.004) discard; // ~1/255, skip fully transparent pixels
 
-    // Sample game framebuffer
-    vec2 ndc = pc.quad_ndc_min + frag_tex_coord * pc.quad_ndc_size;
-    vec2 screen_uv = ndc * 0.5 + 0.5;
-    vec3 original = texture(game_fb_sampler, screen_uv).rgb;
+    // Read game framebuffer via input attachment (no copy needed)
+    vec3 original = subpassLoad(game_fb_input).rgb;
     vec3 color = original;
 
     // Fixed order: invert → dodge → burn → complement → luma_invert → hue_rotate → saturate

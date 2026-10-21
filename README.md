@@ -15,7 +15,7 @@ yay -S krosshair
 ### From source
 
 ```bash
-git clone https://github.com/fibsussy/krosshair.git
+git clone https://github.com/noahlyk/krosshair.git
 cd krosshair
 make
 ```
@@ -31,7 +31,7 @@ For Steam games, add `KROSSHAIR=1 %command%` to launch options.
 
 ## crosshair-maker integration
 
-krosshair works out of the box with [crosshair-maker](https://github.com/fibsussy/crosshair-maker), a crosshair overlay creator with SVG rendering and preview. The currently selected crosshair is automatically exported to `~/.config/crosshair-maker/projects/current.png`, which krosshair picks up as its default — just launch your game with `KROSSHAIR=1` and go.
+krosshair works out of the box with [crosshair-maker](https://github.com/noahlyk/crosshair-maker), a crosshair overlay creator with SVG rendering and preview. The currently selected crosshair is automatically exported to `~/.config/crosshair-maker/projects/current.png`, which krosshair picks up as its default — just launch your game with `KROSSHAIR=1` and go.
 
 You can override the image with `export KROSSHAIR_IMG=/path/to/crosshair.png` if you want to use a custom file.
 

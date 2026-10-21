@@ -1,10 +1,10 @@
-# Maintainer: fibsussy <noahlykins@gmail.com>
+# Maintainer: noahlyk <noahlykins@gmail.com>
 pkgname=krosshair
 pkgver=0.2.7
 pkgrel=1
 pkgdesc="Crosshair overlay for games on linux using Vulkan"
 arch=('x86_64' 'aarch64')
-url="https://github.com/fibsussy/krosshair"
+url="https://github.com/noahlyk/krosshair"
 license=('GPL3')
 depends=('vulkan-icd-loader' 'libgl' 'libx11')
 makedepends=('gcc' 'make' 'vulkan-headers')
