@@ -11,9 +11,18 @@ makedepends=('gcc' 'make' 'vulkan-headers')
 install=krosshair.install
 options=('!debug')
 
+# Local builds from a git checkout report the tag, commit count and hash, the same as `make version`:
+#   0.5.0+2.gbbd181e, or 0.5.0+2.gbbd181e.dirty with uncommitted changes.
+# Anywhere without git the version above is used.
+pkgver() {
+    cd "$startdir"
+    git rev-parse --git-dir >/dev/null 2>&1 || { echo "$pkgver"; return; }
+    make -s version
+}
+
 build() {
     cd "$startdir"
-    make release
+    KROSSHAIR_VERSION="$pkgver" make release
 }
 
 package() {

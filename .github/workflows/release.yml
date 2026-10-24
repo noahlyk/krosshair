@@ -74,7 +74,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Build binary
-        run: make release
+        run: KROSSHAIR_VERSION=${{ needs.version.outputs.new_version }} make release
       - name: Determine architecture
         id: arch
         run: |
