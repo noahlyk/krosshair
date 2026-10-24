@@ -55,6 +55,12 @@
 pthread_mutex_t global_lock;
 VkPhysicalDeviceDriverProperties driver_properties = {};
 
+#ifndef KROSSHAIR_VERSION
+#define KROSSHAIR_VERSION "0.0.0"
+#endif
+/* Set by the Makefile from git; visible with `strings lib/krosshair.so`. */
+const char krosshair_version[] = KROSSHAIR_VERSION;
+
 unsigned char frag_spv[]                           = {
     0x03, 0x02, 0x23, 0x07, 0x00, 0x00, 0x01, 0x00, 0x0b, 0x00, 0x0d, 0x00,
     0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x00, 0x02, 0x00,
